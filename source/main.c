@@ -712,6 +712,48 @@ int main()
 
     // See README for porting notes
     switch (version) {
+        case 0x1000000:
+        case 0x1010000:
+        case 0x1020000:
+        case 0x1050000:
+        case 0x1100000:
+        case 0x1110000:
+        case 0x1120000:
+        case 0x1130000:
+        case 0x1140000:
+            offsets.offset_authmgr_handle = 0xC18BC0;
+            offsets.offset_sbl_mb_mtx     = 0x2681518;
+            offsets.offset_mailbox_base   = 0x2681520;
+            offsets.offset_sbl_sxlock     = 0x2681528;
+            offsets.offset_mailbox_flags  = 0x2BE1028;
+            offsets.offset_mailbox_meta   = 0x2BE0DC0; // ?? seems to be blank
+            offsets.offset_dmpml4i        = 0x2F9F5B0;
+            offsets.offset_dmpdpi         = 0x2F9F5B4;
+            offsets.offset_pml4pml4i      = 0x2F9F30C;
+            offsets.offset_g_message_id   = 0x4260000;
+            offsets.offset_datacave_1     = 0x4270000;
+            offsets.offset_datacave_2     = 0x4280000;
+            break;
+        case 0x2000000:
+        case 0x2200000:
+        case 0x2250000:
+        case 0x2260000:
+        case 0x2300000:
+        case 0x2500000:
+        case 0x2700000:
+            offsets.offset_authmgr_handle = 0xC3E2D0;
+            offsets.offset_sbl_mb_mtx     = 0x26B1548;
+            offsets.offset_mailbox_base   = 0x26B1550;
+            offsets.offset_sbl_sxlock     = 0x26B1558;
+            offsets.offset_mailbox_flags  = 0x2C79A40;
+            offsets.offset_mailbox_meta   = 0x2C797E0;
+            offsets.offset_dmpml4i        = 0x3133B50;
+            offsets.offset_dmpdpi         = 0x3133B54;
+            offsets.offset_pml4pml4i      = 0x31338AC;
+            offsets.offset_g_message_id   = 0x4260000;
+            offsets.offset_datacave_1     = 0x4270000;
+            offsets.offset_datacave_2     = 0x4280000;
+            break;
         case 0x3000000:
         case 0x3100000:
         case 0x3200000:
