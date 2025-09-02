@@ -1106,9 +1106,11 @@ int main()
     // bc for ps5 games, `app0` and `app0-patch0-union` has the same files
 
     //dump_queue_add_dir(sock, "/mnt/sandbox/pfsmnt", 1);
-	dump_queue_add_dir(sock, "system_ex/common_ex/lib", 1);
-    dump(sock, authmgr_handle, &offsets, "/data/dump");
-
+	//dump_queue_add_dir(sock, "system_ex/common_ex/lib", 1);
+    //dump(sock, authmgr_handle, &offsets, "/data/dump");
+    dump_queue_add_dir(sock, "/system", 1);
+    dump(sock, authmgr_handle, &offsets, "/mnt/usb0/data");
+	
 out:
 #ifdef LOG_TO_SOCKET
 	close(sock);
