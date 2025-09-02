@@ -1052,7 +1052,7 @@ int main()
         case 0x10400000:
         case 0x10600000:
             offsets.offset_authmgr_handle = 0x0DB8DF0;
-            offsets.offset_sbl_mb_mtx     = 0x25F71F8;
+            offsets.offset_sbl_mb_mtx     = 0x26F71F8;
             offsets.offset_mailbox_base   = 0x26F7200;
             offsets.offset_sbl_sxlock     = 0x26F7208;
             offsets.offset_mailbox_flags  = 0x2BEE860;
