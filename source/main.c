@@ -1012,6 +1012,59 @@ int main()
             offsets.offset_datacave_1     = 0x5060000;
             offsets.offset_datacave_2     = 0x5064000;
             break;
+        case 0x8000000:
+        case 0x8200000:
+        case 0x8400000:
+        case 0x8600000:
+            offsets.offset_authmgr_handle = 0x0E203C0;
+            offsets.offset_sbl_mb_mtx     = 0x27FF888;
+            offsets.offset_mailbox_base   = 0x27FF890;
+            offsets.offset_sbl_sxlock     = 0x27FF898;
+            offsets.offset_mailbox_flags  = 0x2CEA820;
+            offsets.offset_mailbox_meta   = 0x2CEA5C0;
+            offsets.offset_dmpml4i        = 0x2E48AE4;
+            offsets.offset_dmpdpi         = 0x2E48AE8;
+            offsets.offset_pml4pml4i      = 0x2E4779C;
+            offsets.offset_g_message_id   = 0x4270000;
+            offsets.offset_datacave_1     = 0x5060000;
+            offsets.offset_datacave_2     = 0x5064000;
+            break;
+        case 0x9000000:
+        case 0x9200000:
+        case 0x9400000:
+        case 0x9600000:
+            offsets.offset_authmgr_handle = 0xDB8D60;
+            offsets.offset_sbl_mb_mtx     = 0x26E71F8;
+            offsets.offset_mailbox_base   = 0x26E7200;
+            offsets.offset_sbl_sxlock     = 0x26E7208;
+            offsets.offset_mailbox_flags  = 0x2BCA860;
+            offsets.offset_mailbox_meta   = 0x2BCA600;
+            offsets.offset_dmpml4i        = 0x2D28E14;
+            offsets.offset_dmpdpi         = 0x2D28E18;
+            offsets.offset_pml4pml4i      = 0x2D279CC;
+            offsets.offset_g_message_id   = 0x4270000;
+            offsets.offset_datacave_1     = 0x5060000;
+            offsets.offset_datacave_2     = 0x5064000;
+            break;
+        case 0x10000000:
+        case 0x10010000:
+        case 0x10200000:
+        case 0x10400000:
+        case 0x10600000:
+            offsets.offset_authmgr_handle = 0x0DB8DF0;
+            offsets.offset_sbl_mb_mtx     = 0x26F71F8;
+            offsets.offset_mailbox_base   = 0x26F7200;
+            offsets.offset_sbl_sxlock     = 0x26F7208;
+            offsets.offset_mailbox_flags  = 0x2BEE860;
+            offsets.offset_mailbox_meta   = 0x2BEE600;
+            offsets.offset_dmpml4i        = 0x2CF1194;
+            offsets.offset_dmpdpi         = 0x2CF1198;
+            offsets.offset_pml4pml4i      = 0x2CEFD4C;
+            offsets.offset_g_message_id   = 0x4270000;
+            offsets.offset_datacave_1     = 0x5060000;
+            offsets.offset_datacave_2     = 0x5064000;
+            break;
+	    
         default:
             SOCK_LOG(sock, "[!] unsupported firmware, dumping then bailing!\n");
             char *dump_buf = mmap(NULL, 0x7800 * 0x1000, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);

@@ -1,58 +1,46 @@
-name: Build payload
+name: CI
 
 on:
-  pull_request:
-    paths:
-      - 'include/**'
-      - 'source/**'
-      - 'Makefile'
   push:
-    paths:
-      - 'include/**'
-      - 'source/**'
-      - 'Makefile'
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
   workflow_dispatch:
 
-permissions:
-  id-token: write
-  attestations: write
-  contents: write
+concurrency:
+  group: ${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  payload-build:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    # based on https://github.com/ps5-payload-dev/elfldr/blob/9198efdb02535e6647b00db6d9dac223874b1a87/.github/workflows/ci.yml#L23
-    - name: Checkout SDK
-      uses: actions/checkout@v3
-      with:
-        repository: ps5-payload-dev/sdk
-        path: sdk
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install build-essential clang-18 lld-18 xxd yasm nasm
 
-    - name: Setup SDK
-      working-directory: sdk
-      run: |
-        sudo apt update
-        sudo apt install xxd clang-15 lld-15
-        make DESTDIR=${{ runner.tool_cache }}/ps5-payload-sdk clean install
-        echo PS5_PAYLOAD_SDK=${{ runner.tool_cache }}/ps5-payload-sdk >> $GITHUB_ENV
+      - name: Install toolchain
+        run: |
+          wget https://github.com/ps5-payload-dev/pacbrew-repo/releases/download/v0.29/ps5-payload-dev.tar.gz
+          sudo tar xf ps5-payload-dev.tar.gz -C /
 
-    - name: Checkout
-      uses: actions/checkout@v3
+      - name: Build Payload
+        run: |
+          export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
+          make
 
-    - name: Build
-      run: make
+      - name: Upload Payload ELF
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-self-decrypter
+          path: ./bin/ps5-self-decrypter.elf
+          if-no-files-found: error
 
-    - name: Attest
-      uses: actions/attest-build-provenance@v1
-      continue-on-error: true  # this will fail if the repo is private
-      with: 
-        subject-path: ./bin/ps5-self-decrypter.elf
-
-    - name: Upload
-      uses: actions/upload-artifact@v4
-      with:
-        name: ps5-self-decrypter
-        path: ./bin/ps5-self-decrypter.elf
-        if-no-files-found: error
