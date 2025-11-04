@@ -47,12 +47,14 @@ uint64_t g_bump_allocator_len;
 
 char *g_dump_queue_buf = NULL;
 int g_dump_queue_buf_pos = 0;
+int g_dump_queue_num_files = 0;
 #define G_DUMP_QUEUE_BUF_SIZE 1 * 1024 * 1024 // 1MB
 
 void *bump_alloc(uint64_t len)
 {
     void *ptr;
     if (g_bump_allocator_cur + len >= (g_bump_allocator_base + g_bump_allocator_len)) {
+        printf("[!] bump allocator out of memory\n");
         return NULL;
     }
 
@@ -203,7 +205,7 @@ struct self_block_segment *self_decrypt_segment(
         err = _sceSblAuthMgrSmLoadSelfSegment(sock, authmgr_handle, service_id, chunk_table_pa, segment_idx);
         if (err == 0)
             break;
-        sleep(1);
+        usleep(100000);
     }
 
     if (err != 0)
@@ -301,6 +303,8 @@ void *self_decrypt_block(
     uint64_t data_out_pa;
     uint64_t input_addr;
     void *out_block_data;
+    uint64_t input_size;
+    char temp_buf[0x4000];
 
     data_out_va  = g_kernel_data_base + offsets->offset_datacave_1;
     data_out_pa  = pmap_kextract(sock, data_out_va);
@@ -308,16 +312,26 @@ void *self_decrypt_block(
     data_blob_va = g_kernel_data_base + offsets->offset_datacave_2;
     data_blob_pa = pmap_kextract(sock, data_blob_va);
 
-    // Calculate input address and size
     input_addr = (uint64_t) (file_data + segment->offset + block_segment->extents[block_idx]->offset);
-
-    // Segmented copy into data cave #1
-    for (int i = 0; i < 4; i++) {
-        kernel_copyin((void *) (input_addr + (i * 0x1000)), data_blob_va + (i * 0x1000), 0x1000);
+    input_size = block_segment->extents[block_idx]->len;
+    if (input_size > 0x4000) {
+        // shouldnt happen
+        SOCK_LOG(sock, "[!] self_decrypt_block: input_size > 0x4000\n");
+        return NULL;
     }
-
+    memcpy(temp_buf, (void *)input_addr, input_size);
+    memset(temp_buf + input_size, 0, 0x4000 - input_size);
+    
     // Request segment decryption
-    for (int tries = 0; tries < 5; tries++) {
+    const int max_tries = 10;
+    for (int tries = 0; tries < max_tries; tries++) {
+
+        for (int i = 0; i < 0x4000; i += 0x1000) {
+            if (kernel_copyin(temp_buf + i, data_blob_va + i, 0x1000)) {
+                SOCK_LOG(sock, "[!] self_decrypt_block: kernel_copyin failed for block %d, chunk %d\n", block_idx, i / 0x1000);
+                return NULL;
+            }
+        }
         err = _sceSblAuthMgrSmLoadSelfBlock(
             sock,
             authmgr_handle,
@@ -333,6 +347,10 @@ void *self_decrypt_block(
             break;
 
         usleep(100000);
+
+        if (tries < max_tries - 1) {
+            SOCK_LOG(sock, "self_decrypt_block: failed to decrypt block %d, err: %d, retrying... (%d/%d)\n", block_idx, err, tries + 1, max_tries);
+        }
     }
 
     if (err != 0)
@@ -532,12 +550,7 @@ int decrypt_self(int sock, uint64_t authmgr_handle, char *path, int out_fd, stru
         }
 
         // Get accompanying ELF segment
-        cur_phdr = start_phdrs;
-        for (int phnum = 0; phnum < header->segment_count; phnum++) {
-            if (cur_phdr->p_filesz == segment->uncompressed_size)
-                break;
-            cur_phdr++;
-        }
+        cur_phdr = &start_phdrs[SELF_SEGMENT_ID(segment)];
 
         // Get block info for this segment
         block_info = block_segments[i];
@@ -597,6 +610,7 @@ int decrypt_self(int sock, uint64_t authmgr_handle, char *path, int out_fd, stru
         SOCK_LOG(sock, "[!] failed to dump to file, %d != %lu (%d).\n", written_bytes, final_file_size, errno);
         err = -5;
     }
+    fsync(out_fd);
 
     SOCK_LOG(sock, "  [+] wrote 0x%08x bytes...\n", written_bytes);
 
@@ -636,6 +650,7 @@ int dump_queue_reset()
 
     g_dump_queue_buf_pos = 0;
     g_dump_queue_buf[0] = '\0';
+    g_dump_queue_num_files = 0;
     return 0;
 }
 
@@ -706,6 +721,7 @@ int dump_queue_add_file(int sock, char *path)
 #endif
 
     g_dump_queue_buf_pos = new_g_dump_queue_buf_pos;
+    g_dump_queue_num_files++;
 
     // null terminate the next entry so we know to break
     g_dump_queue_buf[g_dump_queue_buf_pos] = '\0';
@@ -763,6 +779,23 @@ int dump_queue_add_dir(int sock, char* path, int recursive)
     return 0;    
 }
 
+#define SYS_THR_SELF 0x1B0
+static inline int gettid()
+{
+    long tid;
+    __syscall(SYS_THR_SELF, &tid);
+    return tid;
+}
+
+static uint64_t get_thread()
+{
+    uint64_t proc = kernel_get_proc(getpid());
+    int tid = gettid();
+    for(uint64_t thr = kernel_getlong(proc+16); thr; thr = kernel_getlong(thr+16))
+        if((int)kernel_getlong(thr+0x9c) == tid)
+            return thr;
+    return 0;
+}
 
 int dump(int sock, uint64_t authmgr_handle, struct tailored_offsets *offsets, const char *out_dir_path)
 {
@@ -775,19 +808,27 @@ int dump(int sock, uint64_t authmgr_handle, struct tailored_offsets *offsets, co
     char* entry;
     char out_file_path[PATH_MAX];
     struct stat out_file_stat;
-    uint64_t spinlock_lock = 0x13371337;
-    uint64_t spinlock_unlock = 0;
+    uint64_t spinlock_lock = get_thread();
+    uint64_t spinlock_unlock = 0x1;
 
     uintptr_t sbl_sxlock_addr = g_kernel_data_base + offsets->offset_sbl_sxlock + 0x18;
-    kernel_copyout(sbl_sxlock_addr, &spinlock_unlock, sizeof(spinlock_unlock));
 
-    // Lock the SBL spinlock BKL style
-    for (int i = 0; i < 0x100; i++) {
-        kernel_copyin(&spinlock_lock, sbl_sxlock_addr, sizeof(spinlock_lock));
+    while (1) {
+        uint64_t lock_val = 0;
+        kernel_copyout(sbl_sxlock_addr, &lock_val, sizeof(lock_val));
+        if (lock_val == 0x1) {
+            kernel_copyin(&spinlock_lock, sbl_sxlock_addr, sizeof(spinlock_lock));
+            kernel_copyout(sbl_sxlock_addr, &lock_val, sizeof(lock_val));
+            if ((lock_val & ~0xFULL) == spinlock_lock) {
+                break;
+            }
+        }
         usleep(1000);
     }
 
     entry = g_dump_queue_buf;
+    int num_files_success = 0;
+    int num_files_processed = 0;
     while (*entry != '\0') {
         SOCK_LOG(sock, "[+] processing %s\n", entry);
         int entry_len = strlen(entry);
@@ -806,11 +847,6 @@ int dump(int sock, uint64_t authmgr_handle, struct tailored_offsets *offsets, co
             }
         }
 
-//        for (int i = 0; i < 0x100; i++) {
-//            kernel_copyin(&spinlock_lock, g_kernel_data_base + offsets->offset_sbl_sxlock + 0x18, 0x8);
-//            usleep(100);
-//        }
-
         char parent_dir[PATH_MAX];
         int last_slash = strrchr(out_file_path, '/') - out_file_path;
         strncpy(parent_dir, out_file_path, last_slash);
@@ -818,41 +854,78 @@ int dump(int sock, uint64_t authmgr_handle, struct tailored_offsets *offsets, co
         _mkdir(parent_dir);
 
         // Decrypt
-        out_fd = open(out_file_path, O_WRONLY | O_CREAT, 0644);
-        if (out_fd < 0) {
-            SOCK_LOG(sock, "[!] failed to open %s for writing, errno: %d\n", out_file_path, errno);
-            entry = (char *) entry + entry_len + 1;
-            continue;
-        }
-        err = decrypt_self(sock, authmgr_handle, entry, out_fd, offsets);
-        if (err == -11) {
-            // Give 2 more attempts
-            for (int attempt = 0; attempt < 2; attempt++) {
-                out_fd = open(out_file_path, O_WRONLY | O_CREAT, 0644);
-                err = decrypt_self(sock, authmgr_handle, entry, out_fd, offsets);
-                if (err == 0)
-                    break;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            out_fd = open(out_file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0) {
+                SOCK_LOG(sock, "[!] failed to open %s for writing, errno: %d\n", out_file_path, errno);
+                err = -1;
+                break;
             }
+            err = decrypt_self(sock, authmgr_handle, entry, out_fd, offsets); // closes out_fd internally
+            if (err == 0)
+                break;
         }
 
+        num_files_processed++;
         if (err != 0) {
             unlink(out_file_path);
-            SOCK_LOG(sock, "[!] failed to dump %s\n", entry);
+            SOCK_LOG(sock, "[!] failed to decrypt %s, err: %d (%d/%d files processed)\n", entry, err, num_files_processed, g_dump_queue_num_files);
+        } else {
+            num_files_success++;
+            SOCK_LOG(sock, "[+] successfully decrypted %s (%d/%d files processed)\n", entry, num_files_processed, g_dump_queue_num_files);
         }
 
         if (err == -5) {
             goto out;
         }
-        
+
         entry = (char *) entry + entry_len + 1;
     }
 
-    SOCK_LOG(sock, "[+] done\n");
-
 out:
+    if (num_files_success != g_dump_queue_num_files) {
+        SOCK_LOG(sock, "[!] done, %d files failed to decrypt, %d succeeded, %d skipped, out of a total of %d\n",
+                 num_files_processed - num_files_success,
+                 num_files_success,
+                 g_dump_queue_num_files - num_files_processed,
+                 g_dump_queue_num_files);
+        err = -1;
+    } else {
+        SOCK_LOG(sock, "[+] done, all %d files decrypted successfully!\n", num_files_success);
+    }
+    SOCK_LOG(sock, "[+] output directory: %s\n", out_dir_path);
+
+    uint64_t spinlock_after = 0;
+    kernel_copyout(sbl_sxlock_addr, &spinlock_after, sizeof(spinlock_after));
+    
+    // // if 0x4 is set (and/or 0x2?) then there are waiters and since we cant wake them the console is probably frozen
+    // // and would require a hard shutdown anyway, so just panic instead
+    // // sometimes it can recover from waiters, i guess lock normally spins for some time before going to sleep and if we complete before that we can recover? idk, idc
+    // if (spinlock_after & 0x6) {
+    //     SOCK_LOG(sock, "[!] lock has waiters, panicking to avoid hang...\n");
+    //     sleep(2);
+    //     kernel_setchar(KERNEL_ADDRESS_TEXT_BASE, 0); // panic
+    // }
+
+    spinlock_unlock = 0x1 | (spinlock_after & 0xF);
     kernel_copyin(&spinlock_unlock, sbl_sxlock_addr, sizeof(spinlock_unlock));
 
     return err;
+}
+
+int is_usb_mounted(int index)
+{
+    char path[64];
+    snprintf(path, sizeof(path), "/mnt/usb%d", index);
+    struct stat parent_stat;
+    if (stat("/mnt", &parent_stat) != 0) {
+        return 0;
+    }
+    struct stat usb_stat;
+    if (stat(path, &usb_stat) != 0) {
+        return 0;
+    }
+    return (parent_stat.st_dev != usb_stat.st_dev);
 }
 
 int main()
@@ -882,7 +955,7 @@ int main()
 #endif
 
     // Initialize bump allocator
-    g_bump_allocator_len  = 0x100000;
+    g_bump_allocator_len  = 16 * 1024 * 1024;
     g_bump_allocator_base = mmap(NULL, g_bump_allocator_len, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     if (g_bump_allocator_base == NULL) {
         SOCK_LOG(sock, "[!] failed to allocate backing space for bump allocator\n");
@@ -895,7 +968,7 @@ int main()
 
     // Tailor
     uint32_t version = kernel_get_fw_version() & 0xffff0000;
-    printf("[+] firmware version 0x%x\n", version);
+    SOCK_LOG(sock, "[+] firmware version 0x%x\n", version);
 
     // See README for porting notes
     switch (version) {
@@ -1104,9 +1177,31 @@ int main()
     // `/mnt/sandbox/pfsmnt/*-app0/` and `/mnt/sandbox/pfsmnt/*-patch0/`
     // i did this so when i pass in `/mnt/sandbox/pfsmnt` it will only dump `/mnt/sandbox/pfsmnt/PPSA01487-app0-patch0-union`
     // bc for ps5 games, `app0` and `app0-patch0-union` has the same files
+    
+#ifdef DUMP_ALL_SYSTEM
+    dump_queue_add_dir(sock, "/system", 1);
+    dump_queue_add_dir(sock, "/system_ex", 1);
+#endif
 
+#ifdef DUMP_GAME
     dump_queue_add_dir(sock, "/mnt/sandbox/pfsmnt", 1);
-    dump(sock, authmgr_handle, &offsets, "/data/dump");
+#endif
+
+#ifdef DUMP_SYSTEM_COMMON_LIB
+    dump_queue_add_dir(sock, "/system/common/lib", 0);
+#endif
+
+#ifdef DUMP_SHELLCORE
+    dump_queue_add_file(sock, "/system/vsh/SceShellCore.elf");
+#endif
+
+    if (is_usb_mounted(0)) {
+        SOCK_LOG(sock, "[+] USB0 is mounted, dumping there...\n");
+        dump(sock, authmgr_handle, &offsets, "/mnt/usb0/dump");
+    } else  {
+        SOCK_LOG(sock, "[+] USB0 is not mounted, dumping to /data/dump...\n");
+        dump(sock, authmgr_handle, &offsets, "/data/dump");
+    }
 
 out:
 #ifdef LOG_TO_SOCKET

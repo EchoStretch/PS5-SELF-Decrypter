@@ -29,18 +29,18 @@ jobs:
 
       - name: Install toolchain
         run: |
-          wget https://github.com/ps5-payload-dev/pacbrew-repo/releases/download/v0.29/ps5-payload-dev.tar.gz
+          wget https://github.com/ps5-payload-dev/pacbrew-repo/releases/latest/download/ps5-payload-dev.tar.gz
           sudo tar xf ps5-payload-dev.tar.gz -C /
 
       - name: Build Payload
         run: |
           export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
-          make
+          make dist
 
       - name: Upload Payload ELF
         uses: actions/upload-artifact@v4
         with:
           name: ps5-self-decrypter
-          path: ./bin/ps5-self-decrypter.elf
+          path: ./bin/*.elf
           if-no-files-found: error
 

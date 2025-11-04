@@ -211,14 +211,14 @@ int sceSblServiceRequest(int sock, struct sbl_msg_header *msg_header, void *in_b
     for (int i = 0; i < 500; i++) {
         kernel_copyout(mailbox_addr + 0x18 + 0x4, &res_after, sizeof(res_after));
 
-        if (res_after != res_before) {
+        if (res_after == 0) {
             break;
         }
 
         usleep(1000);
     }
 
-    usleep(2000);
+    usleep(3000);
 
     if (res_after == res_before) {
         SOCK_LOG(sock, "sceSblServiceRequest: request timed out\n");
