@@ -452,26 +452,19 @@ int decrypt_self(int sock, uint64_t authmgr_handle, char *path, int out_fd, stru
                     (sizeof(struct sce_self_segment_header) * header->segment_count));
     start_phdrs = (struct elf64_phdr *) ((char *) (elf_header) + sizeof(struct elf64_hdr));
 
-    // Allocate backing buffer for output file data. We'll get size by finding the NOTE program header which should be
-    // in most SELFs
     cur_phdr = start_phdrs;
     final_file_size = 0;
     for (int i = 0; i < elf_header->e_phnum; i++) {
-        if (cur_phdr->p_type == PT_NOTE)
+        if (cur_phdr->p_offset + cur_phdr->p_filesz > final_file_size) {
             final_file_size = cur_phdr->p_offset + cur_phdr->p_filesz;
+        }
         cur_phdr++;
     }
 
     if (final_file_size == 0) {
-        // Second chance: fallback on latest LOAD segment size
-        SOCK_LOG(sock, "  [?] file segments are irregular, falling back on last LOAD segment\n");
-
-        cur_phdr = start_phdrs;
-        for (int i = 0; i < elf_header->e_phnum; i++) {
-            if (cur_phdr->p_type == PT_LOAD)
-                final_file_size = cur_phdr->p_offset + cur_phdr->p_filesz;
-            cur_phdr++;
-        }
+        SOCK_LOG(sock, "  [?] failed to get final file size\n");
+        err = -12;
+        goto cleanup_in_file_data;
     }
 
     out_file_data = mmap(NULL, final_file_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
